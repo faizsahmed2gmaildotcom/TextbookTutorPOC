@@ -1,0 +1,482 @@
+{
+  "Skiena-The_Algorithm_Design_Manual.pdf": {
+    "chapters": {
+      "1": {
+        "end": 27,
+        "name": "Introduction to Algorithm Design",
+        "sections": {
+          "1": {
+            "end": 13,
+            "name": "Reasoning about Correctness",
+            "start": 11
+          },
+          "2": {
+            "end": 17,
+            "name": "Modeling the Problem",
+            "start": 15
+          },
+          "3": {
+            "end": 22,
+            "name": "About the War Stories",
+            "start": 21
+          },
+          "4": {
+            "end": 25,
+            "name": "Estimation",
+            "start": 25
+          },
+          "5": {
+            "end": 27,
+            "name": "Exercises",
+            "start": 27
+          }
+        },
+        "start": 3
+      },
+      "2": {
+        "end": 59,
+        "name": "Algorithm Analysis",
+        "sections": {
+          "1": {
+            "end": 34,
+            "name": "The RAM Model of Computation",
+            "start": 31
+          },
+          "2": {
+            "end": 39,
+            "name": "The Big Oh Notation",
+            "start": 34
+          },
+          "3": {
+            "end": 41,
+            "name": "Growth Rates and Dominance Relations",
+            "start": 37
+          },
+          "4": {
+            "end": 46,
+            "name": "Working with the Big Oh",
+            "start": 39
+          },
+          "5": {
+            "end": 51,
+            "name": "Reasoning about Efficiency",
+            "start": 41
+          },
+          "6": {
+            "end": 54,
+            "name": "Summations",
+            "start": 46
+          },
+          "7": {
+            "end": 57,
+            "name": "Logarithms and Their Applications",
+            "start": 48
+          },
+          "8": {
+            "end": 59,
+            "name": "Properties of Logarithms",
+            "start": 52
+          }
+        },
+        "start": 31
+      },
+      "3": {
+        "end": 103,
+        "name": "Data Structures",
+        "sections": {
+          "1": {
+            "end": 74,
+            "name": "Contiguous vs. Linked Data Structures",
+            "start": 69
+          },
+          "2": {
+            "end": 76,
+            "name": "Containers: Stacks and Queues",
+            "start": 75
+          },
+          "3": {
+            "end": 81,
+            "name": "Dictionaries",
+            "start": 76
+          },
+          "4": {
+            "end": 87,
+            "name": "Binary Search Trees",
+            "start": 81
+          },
+          "5": {
+            "end": 93,
+            "name": "Priority Queues",
+            "start": 87
+          },
+          "6": {
+            "end": 98,
+            "name": "Hashing",
+            "start": 93
+          },
+          "7": {
+            "end": 103,
+            "name": "Specialized Data Structures",
+            "start": 98
+          }
+        },
+        "start": 69
+      },
+      "4": {
+        "end": 140,
+        "name": "Sorting",
+        "sections": {
+          "1": {
+            "end": 113,
+            "name": "Applications of Sorting",
+            "start": 109
+          },
+          "2": {
+            "end": 115,
+            "name": "Pragmatics of Sorting",
+            "start": 113
+          },
+          "3": {
+            "end": 124,
+            "name": "Heapsort: Fast Sorting via Data Structures",
+            "start": 115
+          },
+          "4": {
+            "end": 127,
+            "name": "Mergesort: Sorting by Divide and Conquer",
+            "start": 125
+          },
+          "5": {
+            "end": 136,
+            "name": "Quicksort: Sorting by Randomization",
+            "start": 130
+          },
+          "6": {
+            "end": 140,
+            "name": "Distribution Sort: Sorting via Bucketing",
+            "start": 136
+          }
+        },
+        "start": 109
+      },
+      "5": {
+        "end": 166,
+        "name": "Divide and Conquer",
+        "sections": {
+          "1": {
+            "end": 150,
+            "name": "Binary Search and Related Algorithms",
+            "start": 148
+          },
+          "2": {
+            "end": 152,
+            "name": "Recurrence Relations",
+            "start": 152
+          },
+          "3": {
+            "end": 155,
+            "name": "Solving Divide-and-Conquer Recurrences",
+            "start": 154
+          },
+          "4": {
+            "end": 157,
+            "name": "Fast Multiplication",
+            "start": 155
+          },
+          "5": {
+            "end": 159,
+            "name": "Largest Subrange and Closest Pair",
+            "start": 157
+          },
+          "6": {
+            "end": 162,
+            "name": "Parallel Algorithms",
+            "start": 159
+          },
+          "7": {
+            "end": 166,
+            "name": "Convolution (*)",
+            "start": 162
+          }
+        },
+        "start": 147
+      },
+      "6": {
+        "end": 193,
+        "name": "Hashing and Randomized Algorithms",
+        "sections": {
+          "1": {
+            "end": 177,
+            "name": "Probability Review",
+            "start": 172
+          },
+          "2": {
+            "end": 181,
+            "name": "Understanding Balls and Bins",
+            "start": 179
+          },
+          "3": {
+            "end": 184,
+            "name": "Why is Hashing a Randomized Algorithm?",
+            "start": 181
+          },
+          "4": {
+            "end": 186,
+            "name": "Bloom Filters",
+            "start": 182
+          },
+          "5": {
+            "end": 188,
+            "name": "The Birthday Paradox and Perfect Hashing",
+            "start": 184
+          },
+          "6": {
+            "end": 190,
+            "name": "Minwise Hashing",
+            "start": 186
+          },
+          "7": {
+            "end": 192,
+            "name": "Efficient String Matching",
+            "start": 188
+          },
+          "8": {
+            "end": 193,
+            "name": "Primality Testing",
+            "start": 190
+          }
+        },
+        "start": 171
+      },
+      "7": {
+        "end": 235,
+        "name": "Graph Traversal",
+        "sections": {
+          "1": {
+            "end": 203,
+            "name": "Flavors of Graphs",
+            "start": 197
+          },
+          "2": {
+            "end": 212,
+            "name": "Data Structures for Graphs",
+            "start": 203
+          },
+          "3": {
+            "end": 217,
+            "name": "Traversing a Graph",
+            "start": 212
+          },
+          "4": {
+            "end": 221,
+            "name": "Breadth-First Search",
+            "start": 213
+          },
+          "5": {
+            "end": 224,
+            "name": "Depth-First Search",
+            "start": 221
+          },
+          "6": {
+            "end": 235,
+            "name": "Applications of Depth-First Search",
+            "start": 224
+          }
+        },
+        "start": 197
+      },
+      "8": {
+        "end": 276,
+        "name": "Weighted Graph Algorithms",
+        "sections": {
+          "1": {
+            "end": 253,
+            "name": "Minimum Spanning Trees",
+            "start": 243
+          },
+          "2": {
+            "end": 257,
+            "name": "Shortest Paths",
+            "start": 257
+          },
+          "3": {
+            "end": 267,
+            "name": "Network Flows and Bipartite Matching",
+            "start": 267
+          },
+          "4": {
+            "end": 276,
+            "name": "Design Graphs, Not Algorithms",
+            "start": 274
+          }
+        },
+        "start": 243
+      },
+      "9": {
+        "end": 303,
+        "name": "Combinatorial Search",
+        "sections": {
+          "1": {
+            "end": 289,
+            "name": "Backtracking",
+            "start": 281
+          },
+          "2": {
+            "end": 290,
+            "name": "Examples of Backtracking",
+            "start": 284
+          },
+          "3": {
+            "end": 295,
+            "name": "Search Pruning",
+            "start": 289
+          },
+          "4": {
+            "end": 298,
+            "name": "Sudoku",
+            "start": 290
+          },
+          "5": {
+            "end": 300,
+            "name": "Best-First Search",
+            "start": 298
+          },
+          "6": {
+            "end": 303,
+            "name": "The A* Heuristic",
+            "start": 300
+          }
+        },
+        "start": 281
+      },
+      "10": {
+        "end": 345,
+        "name": "Dynamic Programming",
+        "sections": {
+          "1": {
+            "end": 312,
+            "name": "Caching vs. Computation",
+            "start": 307
+          },
+          "2": {
+            "end": 318,
+            "name": "Approximate String Matching",
+            "start": 314
+          },
+          "3": {
+            "end": 324,
+            "name": "Longest Increasing Subsequence",
+            "start": 324
+          },
+          "4": {
+            "end": 333,
+            "name": "Unordered Partition or Subset Sum",
+            "start": 329
+          },
+          "5": {
+            "end": 339,
+            "name": "The Ordered Partition Problem",
+            "start": 333
+          },
+          "6": {
+            "end": 345,
+            "name": "Parsing Context-Free Grammars",
+            "start": 337
+          }
+        },
+        "start": 307
+      },
+      "11": {
+        "end": 383,
+        "name": "NP-Completeness",
+        "sections": {
+          "1": {
+            "end": 359,
+            "name": "Problems and Reductions",
+            "start": 355
+          },
+          "2": {
+            "end": 361,
+            "name": "Reductions for Algorithms",
+            "start": 358
+          },
+          "3": {
+            "end": 367,
+            "name": "Elementary Hardness Reductions",
+            "start": 361
+          },
+          "4": {
+            "end": 373,
+            "name": "Satisfiability",
+            "start": 367
+          },
+          "5": {
+            "end": 379,
+            "name": "Creative Reductions from SAT",
+            "start": 369
+          },
+          "6": {
+            "end": 383,
+            "name": "The Art of Proving Hardness",
+            "start": 373
+          }
+        },
+        "start": 355
+      },
+      "12": {
+        "end": 426,
+        "name": "Dealing with Hard Problems",
+        "sections": {
+          "1": {
+            "end": 390,
+            "name": "Approximation Algorithms",
+            "start": 389
+          },
+          "2": {
+            "end": 393,
+            "name": "Approximating Vertex Cover",
+            "start": 390
+          },
+          "3": {
+            "end": 397,
+            "name": "Euclidean TSP",
+            "start": 393
+          },
+          "4": {
+            "end": 400,
+            "name": "When Average is Good Enough",
+            "start": 396
+          },
+          "5": {
+            "end": 406,
+            "name": "Set Cover",
+            "start": 397
+          },
+          "6": {
+            "end": 417,
+            "name": "Heuristic Search Methods",
+            "start": 399
+          },
+          "7": {
+            "end": 422,
+            "name": "Quantum Computing",
+            "start": 418
+          }
+        },
+        "start": 389
+      },
+      "13": {
+        "end": 433,
+        "name": "How to Design Algorithms",
+        "sections": {
+          "1": {
+            "end": 433,
+            "name": "Preparing for Tech Company Interviews",
+            "start": 429
+          }
+        },
+        "start": 429
+      }
+    }
+  }
+}
