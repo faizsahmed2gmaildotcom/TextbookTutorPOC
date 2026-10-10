@@ -1,0 +1,5 @@
+pydantic~=2.14.0
+openai~=3.28.0
+pydantic-settings~=2.15.0
+fonttools~=4.66.1
+pymupdf~=1.28.2

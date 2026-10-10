@@ -32,8 +32,8 @@ if __name__ == '__main__':
     pdf = pdf_skills.PDF(os.path.join('PDFs', pdf_name))
 
     if not pdf.name in global_page_ranges.data:
-        toc_raw = pdf.getTOCPageContents()
-        toc_parsed = toc_parser.LLMParseTOC(toc_raw)
+        toc_query_content = pdf.getTOCPageContents()
+        toc_parsed = toc_parser.LLMParseTOC(toc_query_content)
         global_page_ranges.data.update({pdf.name: json.loads(toc_parsed)})
         global_page_ranges.save()
 

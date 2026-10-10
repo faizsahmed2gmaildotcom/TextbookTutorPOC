@@ -1,4 +1,6 @@
-def LLMParseTOC(toc_text: str):
+from typing import Any
+
+def LLMParseTOC(content: list[dict[str, Any]]):
     from llm_client import client
     import asyncio
 
@@ -12,9 +14,9 @@ def LLMParseTOC(toc_text: str):
                                                  section's end will be the same as the chapter's end. Do not consider subsections (subsections are in X.Y.Z 
                                                  or a similar format). The keys for the \"chapters\" dict are the chapter numbers, and must contain only the 
                                                  chapter number X; the keys for the \"section\" dict within each chapter are the section numbers, 
-                                                 and must contain only the section number Y."""
+                                                 and must contain only the section number Y without the chapter number X."""
                                              }, {
                                                  "role": "user",
-                                                 "content": toc_text
+                                                 "content": content
                                              }],
                                              ))

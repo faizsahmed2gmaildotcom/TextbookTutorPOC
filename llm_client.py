@@ -18,6 +18,11 @@ class __ModelSettings:
 
 
 _model_settings = {
+    "none": __ModelSettings(
+        model_name="qwen3-coder-30b-a3b-instruct",
+        temperature=0.2,
+        max_tokens=200000
+    ),
     "parse_toc": __ModelSettings(
         model_name="qwen3-coder-30b-a3b-instruct",
         temperature=0.2,
