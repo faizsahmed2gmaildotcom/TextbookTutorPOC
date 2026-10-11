@@ -1,31 +1,29 @@
-from pydantic import BaseModel
-
-chapter = {
-    "name": "NULL",
-    "start": -1,
-    "end": -1,
-    "sections": {}
-}
-
-section = {
-    "name": "NULL",
-    "start": -1,
-    "end": -1
-}
+from pydantic import BaseModel as _BaseModel
 
 
-class _Section(BaseModel):
+class _Section(_BaseModel):
     name: str
     start: int
-    end: int
 
 
-class _Chapter(BaseModel):
+class _Chapter(_BaseModel):
     name: str
     start: int
-    end: int
-    sections: dict[int, _Section]
+    sections: dict[str, _Section]
 
 
-class TOCStructure(BaseModel):
+class TOCStructure(_BaseModel):
     chapters: dict[int, _Chapter]
+
+
+class _VisualElem(_BaseModel):
+    name: str
+    contents: str
+
+
+class _Page(_BaseModel):
+    visual_elems: list[_VisualElem]
+
+
+class Pages(_BaseModel):
+    pages: dict[int, _Page]

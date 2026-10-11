@@ -1,33 +1,40 @@
 import openai
 import logging
 from settings import settings
-from typing import Any
-from schemas import TOCStructure
+from typing import Any, Literal
+from schemas import *
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class __ModelSettings:
+class _ModelSettings:
     model_name: str
     temperature: float
     max_tokens: int
+    reasoning_effort: Literal["low", "medium", "high", "none"] = "low"
     system_prompt_override: str | None = None
     response_format: Any | None = None
 
 
 _model_settings = {
-    "none": __ModelSettings(
-        model_name="qwen3-coder-30b-a3b-instruct",
+    "none": _ModelSettings(
+        model_name="qwen3-30b-a3b-instruct-2507",
         temperature=0.2,
         max_tokens=200000
     ),
-    "parse_toc": __ModelSettings(
-        model_name="qwen3-coder-30b-a3b-instruct",
+    "parse_toc": _ModelSettings(
+        model_name="qwen3-30b-a3b-instruct-2507",
         temperature=0.2,
         max_tokens=200000,
         response_format=TOCStructure
+    ),
+    "parse_visuals": _ModelSettings(
+        model_name="glm-5.3-flash",
+        temperature=0.2,
+        max_tokens=10000,
+        response_format=Pages
     )
 }
 
@@ -48,7 +55,7 @@ class LLMClient:
     async def get_completion(
             self,
             messages: list[dict[str, Any]],
-            task_type: str
+            task_type: str = "none"
     ) -> str:
         """
         Get a completion from the LLM

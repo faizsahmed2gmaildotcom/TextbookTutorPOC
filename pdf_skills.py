@@ -1,5 +1,5 @@
 import os.path
-from typing import Any
+from typing import Any, Iterable
 
 import minoslib
 
@@ -10,20 +10,20 @@ class PageRange:
     __iter__ returns a 0-indexed range.
     """
 
-    def __init__(self, start: int, end: int):
-        self.start = start
-        self.end = end
-
-    def __bool__(self):
-        return self.end >= self.start
+    def __init__(self, page_idxes: Iterable[int]):
+        self.__page_idxes = set(page_idxes)
 
     def __iter__(self):
-        if not bool(self):
-            raise IndexError(f"{PageRange.__name__} instance: end cannot be before start")
-        return iter(range(self.start - 1, self.end))
+        return iter(self.__page_idxes)
+
+    def __len__(self) -> int:
+        return len(self.__page_idxes)
+
+    def __bool__(self) -> bool:
+        return bool(self.__page_idxes)
 
     def __str__(self) -> str:
-        return f"[{self.start}, {self.end}]"
+        return f"[{', '.join(sorted(map(lambda p: str(p), self.__page_idxes)))}]"
 
 
 class PDF:
@@ -31,21 +31,21 @@ class PDF:
         import pymupdf
         self.name = os.path.split(file_path)[1]
         self.pdf = pymupdf.open(file_path)
-        self.toc: PageRange = PageRange(0, -1)
+        self.toc: PageRange = PageRange(set())
 
     def __getTOCPageRange(self):
         import re
         input_range = minoslib.validateInput(lambda val: bool(re.fullmatch(r"[0-9]*-[0-9]*", val)),
                                              "Enter a page range 'from-to': ")
         start, end = (int(val) for val in input_range.split('-'))
-        self.toc = PageRange(start, end)
+        self.toc = PageRange(range(start - 1, end))
 
     def getTOCPageContents(self):
         if not self.toc:
             self.__getTOCPageRange()
-        return self.parsePageContentsLLM(self.toc)
+        return self.parsePageText(self.toc)
 
-    def __getImgData(self, img_list) -> list:
+    def __getImgData(self, img_list) -> list[dict[str, Any]]:
         import base64
         extracted_imgs = []
         for img_info in img_list:
@@ -58,14 +58,16 @@ class PDF:
             })
         return extracted_imgs
 
-    def __getVectorData(self, page_range: PageRange) -> list:
+    def __getVectorData(self, page_range: PageRange) -> list[dict[str, Any]]:
         import pymupdf, base64
         proximity_margin = 20.0
         base64_imgs = []
 
-        for page in page_range:
-            drawings = self.pdf[page].get_drawings()
-            text_dict = self.pdf[page].get_text("dict")
+        for page_idx in page_range:
+            drawings = self.pdf[page_idx].get_drawings()
+            if not drawings:
+                continue
+            text_dict = self.pdf[page_idx].get_text("dict")
 
             filtered_spans = []
             for block in text_dict.get("blocks", []):
@@ -85,7 +87,7 @@ class PDF:
                             filtered_spans.append(span)
 
             out_doc = pymupdf.open()
-            out_page = out_doc.new_page(width=self.pdf[page].rect.width, height=self.pdf[page].rect.height)
+            out_page = out_doc.new_page(width=self.pdf[page_idx].rect.width, height=self.pdf[page_idx].rect.height)
             shape = out_page.new_shape()
 
             # Reconstruct the vector paths onto the blank page canvas
@@ -149,7 +151,6 @@ class PDF:
             # 4. Render the synthesized isolation layer to a high-res pixmap image
             pix = out_page.get_pixmap(dpi=200)
             os.makedirs("temp", exist_ok=True)
-            pix.save(f"temp/{len(os.listdir('temp'))}.png")
             img_bytes = pix.tobytes("png")
 
             encoded_img = base64.b64encode(img_bytes).decode("utf-8")
@@ -163,18 +164,18 @@ class PDF:
 
         return base64_imgs
 
-
-    def getPageTextImgVec(self, page_range: PageRange) -> tuple[list[str], list[str]]:
-        extracted_text = []
+    def parsePageImgVec(self, page_range: PageRange) -> list[dict[str, Any]]:
         extracted_imgs = []
         for page in page_range:
-            extracted_text.append(f"--- Page {page} ---\n{self.pdf[page].get_text()}")
             img_list = self.pdf[page].get_images(full=True)
-            extracted_imgs += self.__getImgData(img_list) + self.__getVectorData(page_range)
+            extracted_imgs += self.__getImgData(img_list) + self.__getVectorData(PageRange([page]))
 
-        return extracted_text, extracted_imgs
+        return extracted_imgs
 
-    def convertPageToImg(self, page: int) -> dict[str, Any]:
+    def convertPageToText(self, page_idx: int):
+        return f"--- Page {page_idx + 1} ---\n{self.pdf[page_idx].get_text()}"
+
+    def parsePageAsImg(self, page: int) -> dict[str, Any]:
         import base64
         img = self.pdf[page].get_pixmap(dpi=200)
         encoded_img = base64.b64encode(img.tobytes()).decode("utf-8")
@@ -183,15 +184,36 @@ class PDF:
             "image_url": {"url": f"data:image/png;base64,{encoded_img}"}
         }
 
-    def parsePageContentsLLM1(self, page_range: PageRange) -> list[dict[str, Any]]:
-        extracted_text, extracted_imgs = self.getPageTextImgVec(page_range)
+    def parsePageText(self, page_range: PageRange) -> list[dict[str, Any]]:
+        extracted_text = '\n\n'.join(self.convertPageToText(page_idx) for page_idx in page_range)
+        extracted_text.split()
         return [
-            {"type": "text", "text": '\n\n'.join(extracted_text)},
+            {"type": "text", "text": extracted_text}
+        ]
+
+    def parsePageContentsLLM1(self, page_range: PageRange) -> list[dict[str, Any]]:
+        extracted_text = self.parsePageText(page_range)
+        extracted_imgs = self.parsePageImgVec(page_range)
+        return [
+            *extracted_text,
             *extracted_imgs
         ]
 
-    def parsePageContentsLLM2(self, page_range: PageRange) -> list[dict[str, Any]]:
-        return [self.convertPageToImg(page) for page in page_range]
+    def parsePagesAsImgs(self, page_range: PageRange) -> list[dict[str, Any]]:
+        return [self.parsePageAsImg(page) for page in page_range]
+
+    def parsePagesAsPDF(self, page_range: PageRange) -> list[dict[str, Any]]:
+        import pymupdf, base64
+        with pymupdf.open() as stripped_pdf:
+            for page_idx in page_range:
+                stripped_pdf.insert_pdf(self.pdf, from_page=page_idx, to_page=page_idx)
+            encoded_pdf = base64.b64encode(stripped_pdf.tobytes()).decode("utf-8")
+
+        return [{
+            "type": "file",
+            "filename": f"{self.name} | Pages: {page_range}",
+            "file_data": f"data:application/pdf;base64,{encoded_pdf}"
+        }]
 
 
 if __name__ == '__main__':
@@ -199,16 +221,18 @@ if __name__ == '__main__':
     from llm_client import client
 
     my_pdf = PDF('PDFs/Skiena-The_Algorithm_Design_Manual.pdf')
-    print(my_pdf.parsePageContentsLLM1(PageRange(133, 133)))
+    pdf_content = my_pdf.parsePageContentsLLM1(PageRange((132, 132)))
 
-    print(asyncio.run(client.get_completion(task_type="none",
-                                            messages=[{
-                                                "role": "system",
-                                                "content": """The user will upload the extracted contents of a slice of a PDF. In the slice,
-                                                text is represented as raw text and all other objects (images, vectors, etc.) are represented as images.
-                                                Based on the uploaded text and the images, return the visual contents of each image."""
-                                            }, {
-                                                "role": "user",
-                                                "content": my_pdf.parsePageContentsLLM1(PageRange(133, 133))
-                                            }],
-                                            )))
+    result = asyncio.run(client.get_completion(messages=[{
+        "role": "system",
+        "content": """The user will upload a slice of a PDF. With as much detail as possible, describe only all images and diagrams. Optimize your result to 
+        be uploaded to a text-only LLM, whose job is to interpret and academically tutor the user (using your image/diagram descriptions; all remaining 
+        text on the page will be parsed and uploaded separately)."""
+    }, {
+        "role": "user",
+        "content": pdf_content
+    }],
+    ))
+
+    with open('temp/latest.md', 'w') as log:
+        log.write(result)
