@@ -3,6 +3,7 @@ from docling.datamodel.pipeline_options import PdfPipelineOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling.chunking import HybridChunker
 from docling.datamodel.base_models import InputFormat
+from hierarchical.postprocessor import ResultPostprocessor
 
 
 def export_chunks_to_jsonl(pdf_path: str):
@@ -22,19 +23,24 @@ def export_chunks_to_jsonl(pdf_path: str):
         }
     )
     print(f"Parsing document for chunking: {pdf_path}")
-    result = converter.convert(pdf_path)
+    result = converter.convert(pdf_path, page_range=(1, 30))
+    ResultPostprocessor(result).process()
     doc = result.document
 
-    # 2. Initialize Docling's HybridChunker with token constraints
-    chunker = HybridChunker()
-    chunk_iter = chunker.chunk(doc)
+    # 2. Initialize Docling's chunkers
+    hybrid_chunker = HybridChunker()
 
     # 3. Serialize chunks and write to .JSONL
     print(f"Exporting chunks to JSONL")
-    with open(os.path.join(output_dir, "raw.jsonl"), "w", encoding="utf-8") as f:
-        for chunk in chunk_iter:
-            # Write each chunk as a single JSON line
+    with open(os.path.join(output_dir, "raw_hybrid.jsonl"), "w", encoding="utf-8") as f:
+        for chunk in hybrid_chunker.chunk(doc):
+            # Export each chunk as a single JSON line
             f.write(json.dumps(chunk.export_json_dict(), ensure_ascii=False) + "\n")
+    # Potentially swap to using doc.iterate_items() natively?
+    with open(os.path.join(output_dir, "raw_items.txt"), "w", encoding="utf-8") as f:
+        for item in doc.iterate_items():
+            # Write each item as a single line
+            f.write(json.dumps(str(item), ensure_ascii=False) + "\n")
 
     # 4. Extract images; send parent images along with text bodies
     for pic in doc.pictures:

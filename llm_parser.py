@@ -28,7 +28,7 @@ def LLMParseTOC(content: list[dict[str, Any]], page_offset: int = 0):
         next_chapter = result["chapters"][chapters[i + 1]]  # Safer than str(int(c_id) + 1) in case of numbering gaps
 
         cur_chapter["start"] += page_offset
-        cur_chapter.update({"end": next_chapter["start"] - 1 + page_offset})
+        cur_chapter.update({"end": next_chapter["start"] - 1 + page_offset})  # Chapters will always begin at the start of a page.
 
         # Use list() to iterate over a static copy of keys while modifying the dictionary
         for s_id in list(cur_chapter["sections"].keys()):
@@ -46,7 +46,7 @@ def LLMParseTOC(content: list[dict[str, Any]], page_offset: int = 0):
                 next_section = cur_chapter["sections"][sections[j + 1]]
 
                 cur_section["start"] += page_offset
-                cur_section.update({"end": next_section["start"] - 1 + page_offset})
+                cur_section.update({"end": next_section["start"] + page_offset})  # Sections may not begin at the start of a page!
 
             # Last section ends at the chapter's end
             last_section = cur_chapter["sections"][sections[-1]]
