@@ -2,6 +2,9 @@ import os.path
 from typing import Any, Iterable
 
 import minoslib
+from logging_config import get_logger
+
+logger = get_logger(__name__)
 
 
 class PageRange:

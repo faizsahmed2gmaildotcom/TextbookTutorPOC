@@ -11,7 +11,7 @@ I want the ToC to be automatically fetched, such that I no longer have to enter 
 
 Acceptance criteria:
 - Fetching the table of contents no longer requires human intervention and is instead inferred entirely from doc_items with label="document_index".
-- page_offset must be set to the first page after the ToC.
+- page_offset must be set to the final ToC page.
 - If the ToC cannot be automatically found, fallback to asking the user for the ToC page range.
 
 Extra information:

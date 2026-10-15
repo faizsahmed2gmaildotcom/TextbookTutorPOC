@@ -13,7 +13,8 @@ class _Chapter(_BaseModel):
 
 
 class TOCStructure(_BaseModel):
-    chapters: dict[int, _Chapter]
+    chapters: dict[str, _Chapter]
+    thinking: str
 
 
 class _VisualElem(_BaseModel):
@@ -27,3 +28,11 @@ class _Page(_BaseModel):
 
 class Pages(_BaseModel):
     pages: dict[int, _Page]
+
+
+class Intent(_BaseModel):
+    sufficient: bool
+    implicit_reference: bool
+    implicit_target: str
+    additional_targets: list[str]
+    reasoning: str

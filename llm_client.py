@@ -1,11 +1,11 @@
 import openai
-import logging
 from settings import settings
 from typing import Any, Literal
 from schemas import *
 from dataclasses import dataclass
+from logging_config import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -13,7 +13,6 @@ class _ModelSettings:
     model_name: str
     temperature: float
     max_tokens: int
-    reasoning_effort: Literal["low", "medium", "high", "none"] = "low"
     system_prompt_override: str | None = None
     response_format: Any | None = None
 
@@ -28,13 +27,19 @@ _model_settings = {
         model_name="qwen3-30b-a3b-instruct-2507",
         temperature=0.2,
         max_tokens=200000,
-        response_format=TOCStructure
+        response_format=TOCStructure,
     ),
     "parse_visuals": _ModelSettings(
-        model_name="glm-5.3-flash",
+        model_name="qwen3-30b-a3b-instruct-2507",
         temperature=0.2,
         max_tokens=10000,
         response_format=Pages
+    ),
+    "orchestrator": _ModelSettings(
+        model_name="qwen3-30b-a3b-instruct-2507",
+        temperature=0.2,
+        max_tokens=200000,
+        response_format=Intent
     )
 }
 
@@ -45,6 +50,9 @@ class LLMClient:
         self._initialize_client()
 
     def _initialize_client(self):
+        if self.client:
+            return
+
         self.client = openai.AsyncOpenAI(
             base_url=settings.LITELLM_BASE_URL,
             api_key=settings.LITELLM_API_KEY,
@@ -78,7 +86,7 @@ class LLMClient:
                 "model": model_settings.model_name,
                 "temperature": model_settings.temperature,
                 "max_tokens": model_settings.max_tokens,
-                "response_format": model_settings.response_format
+                "response_format": model_settings.response_format,
             }
 
             if model_settings.system_prompt_override:
