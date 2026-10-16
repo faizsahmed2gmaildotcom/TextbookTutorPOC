@@ -30,10 +30,9 @@ class JSONFile:
 
 
 if __name__ == '__main__':
-    import re
     from settings import settings
     from toc_parsers import TOCMode, get_toc_parser
-    from pdf_to_jsonl import convert_pdf, get_toc_pages_from_docling, get_toc_content_from_pymupdf, export_chunks_to_jsonl
+    from pdf_to_jsonl import convert_pdf, export_chunks_to_jsonl
 
     global_page_ranges = JSONFile('chapters_sections.json')
 
@@ -116,40 +115,4 @@ if __name__ == '__main__':
     global_page_ranges.save()
     logger.info("Chapter and section summaries generated and saved to chapters_sections.json")
 
-    # Initialize the LangGraph orchestrator for agentic query processing
-    from orchestrator import create_orchestrator, orchestrate_query
-
-    logger.info("Initializing LangGraph orchestrator...")
-    orchestrator = create_orchestrator()
-    logger.info("LangGraph orchestrator initialized successfully")
-
-    # Interactive query loop using the LangGraph orchestrator
-    print("\n" + "=" * 60)
-    print(f"Textbook Tutor ready! Book: {pdf.name}")
-    print("Commands: /chapter N, /section N.M, /pages from-to")
-    print("Type /quit to exit")
-    print("=" * 60 + "\n")
-
-    while True:
-        try:
-            user_input = input("Query: ")
-        except (EOFError, KeyboardInterrupt):
-            break
-
-        if user_input.strip() == "/quit":
-            break
-        if not user_input.strip():
-            continue
-
-        try:
-            # Use the LangGraph orchestrator to process the query
-            response = asyncio.run(orchestrate_query(
-                user_query=user_input,
-                db_uri=settings.LANCEDB_DATA_PATH,
-                table_name="textbook_chunks",
-                summaries_path="chapters_sections.json"
-            ))
-            print(f"\n{response}\n")
-        except Exception as e:
-            logger.error(f"Error in orchestrator: {e}")
-            print(f"Error: {e}")
+    # Initialize the orchestrator

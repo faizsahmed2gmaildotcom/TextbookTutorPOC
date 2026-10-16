@@ -14,12 +14,12 @@ from dataclasses import dataclass
 @dataclass
 class ParsedQuery:
     raw_query: str
-    command: str | None        # "chapter", "section", "pages", or None
+    command: str | None  # "chapter", "section", "pages", or None
     chapter_id: str | None
     section_id: str | None
     page_from: int | None
     page_to: int | None
-    search_text: str           # Query text after stripping command
+    search_text: str  # Query text after stripping command
 
 
 def parse_query(user_input: str) -> ParsedQuery:
