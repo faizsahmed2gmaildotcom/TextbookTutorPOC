@@ -3,6 +3,8 @@ from docling.datamodel.pipeline_options import PdfPipelineOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling.chunking import HybridChunker
 from docling.datamodel.base_models import InputFormat, DocItemLabel
+from docling_core.transforms.chunker.hierarchical_chunker import ChunkingSerializerProvider, ChunkingDocSerializer
+from docling_core.transforms.serializer.markdown import MarkdownParams
 from hierarchical.postprocessor import ResultPostprocessor
 from logging_config import get_logger
 
@@ -14,6 +16,7 @@ def get_docling_converter() -> DocumentConverter:
     pipeline_options = PdfPipelineOptions(
         generate_page_images=True,
         images_scale=2.0,
+        do_formula_enrichment=False  # Enable only on high VRAM machines
     )
     return DocumentConverter(
         format_options={
@@ -49,26 +52,46 @@ def export_chunks_to_jsonl(doc, output_dir: str):
 
     Args:
         doc: The DoclingDocument from convert_pdf().
-        output_dir: Directory to write raw_hybrid.jsonl, raw_items.txt, and pictures/.
+        output_dir: Directory to write raw_hybrid.jsonl, raw_items.txt, and pictures.
     """
     os.makedirs(os.path.join(output_dir, "pictures"), exist_ok=True)
 
-    hybrid_chunker = HybridChunker()
-    logger.info(f"Exporting chunks to {output_dir}/raw_hybrid.jsonl")
+    class PictureTraversingSerializerProvider(ChunkingSerializerProvider):
+        def get_serializer(self, doc):
+            # Enable traverse_pictures to process text/OCR content nested inside pictures
+            params = MarkdownParams(traverse_pictures=True, compact_tables=True)
+            return ChunkingDocSerializer(doc=doc, params=params)
+
+    hybrid_chunker = HybridChunker(merge_peers=True)
+    logger.info(f"Exporting chunks to {output_dir}...")
+
+    ref_to_text = {elem.self_ref: elem.text for elem in doc.texts}
+
     with open(os.path.join(output_dir, "raw_hybrid.jsonl"), "w", encoding="utf-8") as f:
+        # Text chunks
         for chunk in hybrid_chunker.chunk(doc):
             f.write(json.dumps(chunk.export_json_dict(), ensure_ascii=False) + "\n")
 
-    with open(os.path.join(output_dir, "raw_items.txt"), "w", encoding="utf-8") as f:
-        for item in doc.iterate_items():
-            f.write(json.dumps(str(item), ensure_ascii=False) + "\n")
+        # Picture chunks
+        for pic in doc.pictures:
+            pic_idx = pic.self_ref.split('/')[-1]
+            pic_pil = pic.get_image(doc)
+            pic_name = f"pic_{pic_idx}.png"
+            if pic_pil:
+                img_path = os.path.join(output_dir, "pictures", pic_name)
+                pic_pil.save(img_path)
 
-    for pic in doc.pictures:
-        pic_idx = pic.self_ref.split('/')[-1]
-        pic_pil = pic.get_image(doc)
-        if pic_pil:
-            img_path = os.path.join(output_dir, "pictures", f"pic_{pic_idx}.png")
-            pic_pil.save(img_path)
+            pic_chunk = {
+                "text": pic.caption_text(doc),
+                "meta": {"doc_items": [pic.model_dump()], "headings": [ref_to_text[pic.parent.cref]]},
+                "pic_id": pic_idx
+            }
+            # Extract parent, children, and captions as text (ts kinda sucks)
+            # pic_chunk_texts: list[str] = ["- CAPTION -" + pic.caption_text(doc), "- OCR CONTENTS -"]
+            # for child in pic.children:
+            #     pic_chunk_texts.append(ref_to_text[child.cref])
+            # pic_chunk["text"] = '\n'.join(pic_chunk_texts).strip()
+            f.write(json.dumps(pic_chunk) + '\n')
 
     logger.info(f"Chunking and JSONL export complete for {output_dir}")
 
@@ -185,9 +208,7 @@ def get_toc_content_from_pymupdf(pdf_path: str, toc_pages: list[int]) -> str:
 
 
 if __name__ == "__main__":
-    get_toc_content_from_pymupdf("PDFs/Skiena-The_Algorithm_Design_Manual.pdf", list(range(10, 19)))
-
-    pdf_path = "PDFs/Skiena-The_Algorithm_Design_Manual.pdf"
+    pdf_path = "PDFs/guide-t-cp.pdf"
     pdf_name = os.path.splitext(os.path.basename(pdf_path))[0]
     output_dir = os.path.join("lancedb_chunks", pdf_name)
     doc = convert_pdf(pdf_path)

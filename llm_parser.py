@@ -7,17 +7,17 @@ from logging_config import get_logger
 logger = get_logger(__name__)
 
 
-def LLMParseTOC(content: str, page_offset: int, pdf_path: str):
+def LLMParseTOC(content: str, pdf_path: str, toc_offset: int):
     """
     Parse a table of contents using an LLM.
 
     Args:
         content: Concatenated text of the table of contents (from docling document_index items).
-        page_offset: Offset to add to all page numbers (first page after the ToC).
         pdf_path: Path to the PDF file, for determining the last chapter's end page.
+        toc_offset: Offset to add to all page numbers as a fallback (first page after the ToC).
 
     Returns:
-        Dict with chapters structure compatible with chapters_sections.json.
+        Dict with structure compatible with chapters_sections.json.
     """
     with open("temp.txt", 'w') as fp:
         fp.write(content)
@@ -32,30 +32,41 @@ def LLMParseTOC(content: str, page_offset: int, pdf_path: str):
 
                                                                CRITICAL: You must extract ALL chapters and sections from the table of contents.
                                                                Do not skip any chapters. Count the total number of chapters and ensure
-                                                               you have extracted all of them before finishing. If the book has 23 chapters,
-                                                               you MUST extract all 23 chapters with their page ranges."""
+                                                               you have extracted all of them before finishing."""
                                                        }, {
                                                            "role": "user",
                                                            "content": content
                                                        }],
                                                        )))
 
+    # Map ToC pages to pages indexes
+    from pypdf import PdfReader
+    with PdfReader("PDFs/guide-t-cp.pdf") as reader:
+        page_labels = reader.page_labels
+    page_to_idx = {p: i + 1 for i, p in enumerate(page_labels)}
+
+    # Fallback to offset by ToC page if page labels not provided (i.e. labels map 1:1 to pages)
+    if all(label == str(idx) for label, idx in page_to_idx.items()):
+        page_to_idx = {p: i + 1 + toc_offset for i, p in enumerate(page_labels)}
+
     chapters = sorted(list(result["chapters"].keys()), key=lambda c: int(c))
 
-    # 1. Process all chapters and handle the last one
+    # In the future, make this a recursive algorithm that offsets all "start" and "end" values regardless of depth, handling the last ones accordingly
+    # 1. Process all chapters, handling the last one separately
     for i, c_id in enumerate(chapters):
         cur_chapter = result["chapters"][c_id]
+        cur_chapter["start"] = page_to_idx[str(cur_chapter["start"])]
 
-        cur_chapter["start"] += page_offset
         if c_id == chapters[-1]:
             import pymupdf
             doc = pymupdf.open(pdf_path)
-            cur_chapter.update({"end": doc.page_count})
+            cur_chapter.update({"end": doc.page_count - 1})
             doc.close()
             logger.info(f"Last chapter '{cur_chapter.get('name', c_id)}' end set to PDF page count: {cur_chapter['end']}")
         else:
             next_chapter = result["chapters"][chapters[i + 1]]
-            cur_chapter.update({"end": next_chapter["start"] - 1 + page_offset})
+            cur_chapter.update({"end": page_to_idx[str(next_chapter["start"])] - 1})
+        # cur_chapter start and end have been mapped to indexes by this point
 
         # Use list() to iterate over a static copy of keys while modifying the dictionary
         for s_id in list(cur_chapter["sections"].keys()):
@@ -72,12 +83,12 @@ def LLMParseTOC(content: str, page_offset: int, pdf_path: str):
                 cur_section = cur_chapter["sections"][s_id]
                 next_section = cur_chapter["sections"][sections[j + 1]]
 
-                cur_section["start"] += page_offset
-                cur_section.update({"end": next_section["start"] + page_offset})
+                cur_section["start"] = page_to_idx[str(cur_section["start"])]
+                cur_section.update({"end": page_to_idx[str(next_section["start"])]})
 
             # Last section ends at the chapter's end
             last_section = cur_chapter["sections"][sections[-1]]
-            last_section["start"] += page_offset
+            last_section["start"] = page_to_idx[str(last_section["start"])]
             last_section.update({"end": cur_chapter["end"]})
 
     return result
@@ -98,3 +109,7 @@ def LLMParseVisuals(content: list[dict[str, Any]]):
                                                             "content": content
                                                         }]
                                                         )))
+
+
+if __name__ == "__main__":
+    pass

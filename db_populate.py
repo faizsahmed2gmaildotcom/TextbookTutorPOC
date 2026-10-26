@@ -18,24 +18,20 @@ class Item:
     label: str
     char_range: tuple[int, int] = (10 ** 9, -1)
     page_range: tuple[int, int] = (10 ** 9, -1)
-    picture_ref: str = ""
 
 
 def parseChunk(raw_chunk: dict[str, Any]) -> dict[str, Any]:
-    import re
-
     parsed: dict[str, Any] = {
         "text": raw_chunk["text"],
-        "items": []
+        "items": [],
+        "header": raw_chunk["meta"]["headings"][-1],
+        "pic_id": raw_chunk.get("pic_id", "")
     }
 
     char_offset = 0
     doc_items = raw_chunk["meta"]["doc_items"]
     for raw_item in doc_items:
-        new_item = Item(raw_item["label"])
-
-        if re.fullmatch(r"#/pictures/[0-9]*", raw_item["parent"]["$ref"]):
-            new_item.picture_ref = f"pic_{raw_item['parent']['$ref'].split('/')[-1]}.png"
+        new_item = Item(label=raw_item["label"])
 
         for prov in raw_item["prov"]:
             new_item.char_range = (
@@ -102,9 +98,9 @@ def enrich_chunk_with_toc(parsed_chunk: dict, toc_structure: dict) -> dict[str, 
     return enrichment
 
 
-def populate_lancedb_from_jsonl(
-    jsonl_path: str, db_uri: str, table_name: str,
-    toc_structure: dict | None = None
+def populateOrLoad(
+        jsonl_path: str, db_uri: str, table_name: str,
+        toc_structure: dict | None = None
 ):
     """
     Reads structured .JSONL chunks, generates embeddings,
@@ -112,6 +108,7 @@ def populate_lancedb_from_jsonl(
 
     If toc_structure is provided, chunks are enriched with chapter/section/page metadata.
     """
+    db = lancedb.connect(db_uri)
     chunks_data: list[dict] = []
     logger.info(f"Reading chunks from {jsonl_path}...")
 
@@ -127,6 +124,10 @@ def populate_lancedb_from_jsonl(
     if not chunks_data:
         logger.warning("No chunks found in the provided JSONL file.")
         return None
+
+    if table_name in db.list_tables().tables:
+        logger.info(f"Table {table_name} already exists.")
+        return db.open_table(table_name)
 
     texts = [chunk.get("text", "") for chunk in chunks_data]
     logger.info(f"Generating embeddings for {len(texts)} chunks...")
@@ -146,18 +147,16 @@ def populate_lancedb_from_jsonl(
             record.update(enrichment)
             if enrichment["chapter_id"] is not None:
                 logger.debug(f"Enriched chunk {i} with chapter={enrichment['chapter_id']}, section={enrichment['section_id']}")
-
         records.append(record)
 
     with open("temp.json", 'w') as fp:
         json.dump(records, fp)
 
-    db = lancedb.connect(db_uri)
     logger.info(f"Writing {len(records)} records to LanceDB table '{table_name}' at {db_uri}...")
-    table = db.create_table(table_name, data=records, mode="overwrite")
+    table = db.create_table(table_name, data=records)
 
     logger.info("Creating Full-Text Search (FTS) index on the 'text' column...")
-    table.create_fts_index(field_names="text", replace=True)
+    table.create_fts_index(field_names="text")
 
     logger.info("LanceDB successfully populated, indexed, and ready for hybrid queries!")
 
@@ -167,18 +166,20 @@ def populate_lancedb_from_jsonl(
 if __name__ == "__main__":
     from settings import settings
     import json
+    from logging_config import setup_logging
+    setup_logging()
 
     # Load ToC structure for enrichment
     with open("chapters_sections.json", "r") as f:
         toc_data = json.load(f)
 
     # For now, use the first PDF's ToC structure
-    pdf_name = "Skiena-The_Algorithm_Design_Manual.pdf"
+    pdf_name = "guide-t-cp.pdf"
     toc_structure = toc_data.get(pdf_name, None)
 
-    populate_lancedb_from_jsonl(
-        jsonl_path="lancedb_chunks/Skiena-The_Algorithm_Design_Manual/raw_hybrid.jsonl",
+    populateOrLoad(
+        jsonl_path="lancedb_chunks/guide-t-cp/raw_hybrid.jsonl",
         db_uri=settings.LANCEDB_DATA_PATH,
-        table_name="textbook_chunks",
+        table_name=pdf_name,
         toc_structure=toc_structure
     )

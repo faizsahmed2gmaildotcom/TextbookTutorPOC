@@ -1,5 +1,5 @@
 import json, os
-import pdf_skills, llm_parser
+import pdf_skills
 import minoslib
 from logging_config import setup_logging, get_logger
 
@@ -47,30 +47,9 @@ if __name__ == '__main__':
         toc_mode = TOCMode(settings.TOC_MODE)
         logger.info(f"Using TOC mode: {toc_mode.value}")
 
-        # Try to parse ToC with the selected mode and fallback chain
-        toc_parsed = None
-        try:
-            parser = get_toc_parser(toc_mode)
-            toc_parsed = parser.parse(pdf_path)
-            logger.info(f"Successfully parsed ToC with {toc_mode.value} mode")
-        except Exception as e:
-            logger.error(f"TOC parsing with {toc_mode.value} mode failed: {e}")
-            logger.info("Falling back to LLM mode...")
-            try:
-                parser = get_toc_parser(TOCMode.LLM)
-                toc_parsed = parser.parse(pdf_path)
-                logger.info("Successfully parsed ToC with LLM mode")
-            except Exception as e:
-                logger.error(f"LLM mode also failed: {e}")
-                # Fallback to manual user input
-                logger.info("Falling back to manual ToC page range input...")
-                toc_query_content = pdf.getTOCPageContents()
-                page_offset = int(minoslib.validateInput(
-                    lambda val: val.isdigit(),
-                    "Enter the page offset (first page after ToC): "
-                ))
-                toc_parsed = llm_parser.LLMParseTOC(toc_query_content, page_offset, pdf_path)
-                logger.info("Successfully parsed ToC with manual input")
+        parser = get_toc_parser(toc_mode)
+        toc_parsed = parser.parse(pdf_path)
+        logger.info(f"Successfully parsed ToC with {toc_mode.value} mode")
 
         global_page_ranges.data.update({pdf.name: toc_parsed})
         global_page_ranges.save()
@@ -93,26 +72,44 @@ if __name__ == '__main__':
         logger.info(f"Chunks already exist at {jsonl_path}")
 
     # Populate LanceDB with ToC structure for enrichment
-    from populate_lancedb import populate_lancedb_from_jsonl
-    populate_lancedb_from_jsonl(
+    from db_populate import populateOrLoad
+    lancedb_table = populateOrLoad(
         jsonl_path=jsonl_path,
         db_uri=settings.LANCEDB_DATA_PATH,
-        table_name="textbook_chunks",
+        table_name=pdf.name,
         toc_structure=book_page_ranges
     )
     logger.info("LanceDB populated successfully")
 
     # Generate chapter and section summaries
+    from orchestrator import Skills, buildTextbookRagAgent
     from summary_generator import generate_summaries
+
+    skills = Skills(pdf.name, book_page_ranges, lancedb_table)
     logger.info("Generating chapter and section summaries...")
     awaitable = generate_summaries(
-        db_uri=settings.LANCEDB_DATA_PATH,
-        table_name="textbook_chunks",
+        skills,
         chapters_sections_path="chapters_sections.json"
     )
     import asyncio
+
     global_page_ranges.data = asyncio.run(awaitable)
     global_page_ranges.save()
+    book_page_ranges = global_page_ranges.data[pdf.name]
     logger.info("Chapter and section summaries generated and saved to chapters_sections.json")
 
     # Initialize the orchestrator
+    from langchain_core.messages import HumanMessage
+
+    skills.book_data = book_page_ranges
+    agent = buildTextbookRagAgent(skills)
+
+    user_query = ""
+    while user_query.lower() != "quit":
+        user_query = input("Ask away!\n")
+        result = agent.invoke({
+            "messages": [HumanMessage(user_query)]
+        }, {
+            "configurable": {"thread_id": "test"}
+        })
+        print(result["messages"][-1].content)

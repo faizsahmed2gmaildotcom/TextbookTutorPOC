@@ -1,6 +1,8 @@
 from typing import Literal, Any
 import lancedb
-from populate_lancedb import encoder
+
+from main import JSONFile
+from db_populate import encoder
 from logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -57,7 +59,7 @@ def query_textbook_rag(
         )
         logger.info(f"Filtering to pages {parsed.page_from}-{parsed.page_to}")
 
-    results = search.limit(20).to_pandas()
+    results = search.to_pandas()
 
     if results.empty:
         return [{"type": "text", "text": "No relevant textbook passages found for this query."}]
@@ -75,7 +77,7 @@ def query_textbook_rag(
                 pr = item.get("page_range", [0, 0])
                 pages = str(pr[0]) + (f"-{pr[1]}" if pr[0] != pr[1] else "")
 
-                pic_ref = item.get("picture_ref", "")
+                pic_ref = item.get("picture_name", "")
                 chapter_name = row.get("chapter_name", "")
                 section_name = row.get("section_name", "")
 
@@ -117,7 +119,7 @@ def query_textbook_rag(
 
 
 if __name__ == "__main__":
-    from command_parser import parse_query, ParsedQuery
+    from command_parser import ParsedQuery
 
     DB_PATH = "lancedb_data"
     TABLE_NAME = "textbook_chunks"

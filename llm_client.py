@@ -1,6 +1,6 @@
 import openai
 from settings import settings
-from typing import Any, Literal
+from typing import Any
 from schemas import *
 from dataclasses import dataclass
 from logging_config import get_logger
@@ -25,7 +25,7 @@ _model_settings = {
     ),
     "parse_toc": _ModelSettings(
         model_name="qwen3-30b-a3b-instruct-2507",
-        temperature=0.2,
+        temperature=0.0,
         max_tokens=200000,
         response_format=TOCStructure,
     ),
