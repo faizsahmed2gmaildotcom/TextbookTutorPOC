@@ -68,10 +68,9 @@ class LLMTOCParser(TOCParser):
 
         # Get ToC content from pymupdf using the detected page numbers
         toc_content = get_toc_content_from_pymupdf(pdf_path, toc_pages)
-        page_offset = toc_pages[-1]  # Final ToC page (because page ranges are 0-indexed, there should be no +1 here)
 
-        logger.info(f"LLM mode: Parsing ToC with page_offset={page_offset}, pages={toc_pages}")
-        return LLMParseTOC(toc_content, page_offset, pdf_path)
+        logger.info(f"LLM mode: Parsing ToC pages={toc_pages}")
+        return LLMParseTOC(toc_content, pdf_path, toc_pages[-1])
 
 
 # ---------------------------------------------------------------------------

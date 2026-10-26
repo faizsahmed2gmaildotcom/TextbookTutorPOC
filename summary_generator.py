@@ -13,14 +13,14 @@ Summaries are stored directly in chapters_sections.json for runtime agentic orch
 
 import json, os
 from logging_config import get_logger
+from orchestrator import Skills
 
 logger = get_logger(__name__)
 
 
 async def generate_summaries(
-    db_uri: str,
-    table_name: str,
-    chapters_sections_path: str = "chapters_sections.json"
+        skills: Skills,
+        chapters_sections_path: str
 ) -> dict:
     """
     Generate summaries for all chapters and sections in chapters_sections.json.
@@ -31,7 +31,6 @@ async def generate_summaries(
 
     Summaries are stored directly in chapters_sections.json under each chapter/section.
     """
-    from db_query import query_textbook_rag
     from command_parser import parse_query
     from llm_client import client
 
@@ -48,7 +47,7 @@ async def generate_summaries(
         logger.info(f"Generating summaries for {pdf_name}")
 
         chapters = pdf_data.get("chapters", {})
-        chapter_ids = sorted(chapters.keys(), key=lambda c: int(c) if c.isdigit() else c)
+        chapter_ids: list[int] = sorted(chapters.keys(), key=lambda c: int(c) if c.isdigit() else c)
 
         # First pass: Generate section summaries for all sections
         for c_id in chapter_ids:
@@ -63,7 +62,7 @@ async def generate_summaries(
 
             for s_id, section in sections.items():
                 sec_name = section.get("name", f"Section {s_id}")
-                if section["summary"]:
+                if section.setdefault("summary", ""):
                     logger.info(f"    Summary already present for Section {c_id}.{s_id}; skipping...")
                     continue
 
@@ -73,27 +72,17 @@ async def generate_summaries(
                 parsed = parse_query(f"/section {c_id}.{s_id}")
 
                 try:
-                    results = query_textbook_rag(db_uri, table_name, parsed.search_text, "sequential", parsed)
-                    chunk_texts = []
+                    section_contents = skills.getSectionRawContents([(c_id, s_id)])
 
-                    for item in results:
-                        if isinstance(item, dict) and item.get("type") == "text":
-                            chunk_texts.append(item.get("text", ""))
-
-                    # Use ALL chunks (no truncation)
-                    combined = "\n\n".join(chunk_texts)
-
-                    if combined.strip():
-                        response = await client.get_completion(
-                            messages=[
-                                {"role": "system", "content": "Summarize this textbook section in 1-3 sentences. Include key concepts and important details. Be thorough but concise."},
-                                {"role": "user", "content": f"Section: {sec_name} (Chapter {c_id})\n\nContent:\n{combined}"}
-                            ],
-                            task_type="none"
-                        )
-                        sec_summary = response.strip()
-                    else:
-                        sec_summary = f"No content available for {sec_name}"
+                    response = await client.get_completion(
+                        messages=[
+                            {"role": "system",
+                             "content": "Summarize this textbook section in 1-3 sentences. Include key concepts and important details. Be thorough but concise."},
+                            {"role": "user", "content": section_contents}
+                        ],
+                        task_type="none"
+                    )
+                    sec_summary = response.strip()
                 except Exception as e:
                     logger.error(f"Failed to generate summary for Section {c_id}.{s_id}: {e}")
                     sec_summary = f"Summary generation failed: {e}"
@@ -105,7 +94,7 @@ async def generate_summaries(
         for c_id in chapter_ids:
             chapter = chapters[c_id]
             ch_name = chapter.get("name", f"Chapter {c_id}")
-            if chapter["summary"]:
+            if chapter.setdefault("summary", ""):
                 logger.info(f"Summary already present for Chapter {c_id}; skipping...")
                 continue
 
@@ -121,10 +110,12 @@ async def generate_summaries(
                 section_summaries.append(f"Section {s_id} ({sec_name}): {sec_summary}")
 
             # Retrieve chapter-level chunks (chunks not in any section)
-            parsed = parse_query(f"/chapter {c_id}")
-
             try:
-                results = query_textbook_rag(db_uri, table_name, parsed.search_text, "sequential", parsed)
+                results = (
+                    skills.lancedb_table.search()
+                    .where(f"chapter_id = '{c_id}' AND section_id = ''")
+                    .to_pandas()
+                )
                 chunk_texts = []
 
                 for item in results:
@@ -147,7 +138,8 @@ async def generate_summaries(
             if all_content.strip():
                 response = await client.get_completion(
                     messages=[
-                        {"role": "system", "content": "Summarize this textbook chapter in 3-5 sentences. Include key topics, concepts, and their relationships. Be comprehensive."},
+                        {"role": "system",
+                         "content": "Summarize this textbook chapter in 3-5 sentences. Include key topics, concepts, and their relationships. Be comprehensive."},
                         {"role": "user", "content": f"Chapter: {ch_name}\n\n{all_content}"}
                     ],
                     task_type="none"

@@ -89,7 +89,7 @@ This is a **Textbook Tutor Proof of Concept** - an AI-powered educational assist
   - Includes picture references when relevant
 - **Embeddings**: Uses `sentence-transformers` with `Qwen/Qwen3-Embedding-0.6B`
 
-### `populate_lancedb.py`
+### `db_populate.py`
 - **Purpose**: Builds LanceDB index from Docling JSONL chunks
 - **Key Function**:
   - `populate_lancedb_from_jsonl(jsonl_path, db_uri, table_name)`: Reads chunks, generates embeddings, creates FTS index
@@ -185,7 +185,7 @@ This is a **Textbook Tutor Proof of Concept** - an AI-powered educational assist
 
 1. **Add PDFs**: Place PDF files in `PDFs/` directory
 2. **Parse Document**: Run `pdf_to_jsonl.py` to generate chunks
-3. **Build Index**: Run `populate_lancedb.py` to create LanceDB index
+3. **Build Index**: Run `db_populate.py` to create LanceDB index
 
 ### Interactive Usage (via `main.py`)
 
@@ -269,7 +269,7 @@ When adding new features or making changes, update this file with:
 
 5. **Page Indexing**: The code uses 1-indexed pages in user-facing APIs but 0-indexed internally (see `PageRange` class in `pdf_skills.py`).
 
-6. **Embedding Model**: Uses `Qwen/Qwen3-Embedding-0.6B` - a small but effective embedding model loaded in `populate_lancedb.py`.
+6. **Embedding Model**: Uses `Qwen/Qwen3-Embedding-0.6B` - a small but effective embedding model loaded in `db_populate.py`.
 
 7. **Document Structure**: Docling's hierarchical postprocessor (`ResultPostprocessor`) corrects heading levels and document structure. Always run this when processing PDFs.
 

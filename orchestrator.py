@@ -1,536 +1,312 @@
-"""
-LangGraph-based multi-agent orchestration for the textbook tutor.
-
-Implements a supervisor-agent architecture using LangGraph's StateGraph:
-- supervisor_agent: Main coordinator that analyzes queries and delegates to subagents
-- chapter_agent: Handles chapter-wide queries
-- section_agent: Handles section-specific queries (most precise)
-- pages_agent: Handles page-range queries
-
-The supervisor uses handoff tools to delegate to specialized subagents,
-and aggregates results before composing the final response.
-"""
-
-import json
-from typing import Literal, Sequence, Callable, TypedDict, Any
-
-from langchain.agents import create_agent
-from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.memory import MemorySaver
-from langchain_core.messages import HumanMessage, AIMessage
+import os
+from typing import Any
 from langchain_openai import ChatOpenAI
-
-# Local imports
+from logging_config import get_logger
 from settings import settings
-from llm_client import client as llm_client
-from summary_generator import load_summaries
-from command_parser import parse_query
-from db_query import query_textbook_rag
+
+logger = get_logger(__name__)
 
 
-# === LLM Configuration ===
+class Skills:
+    from lancedb import Table
+    def __init__(self, book_name: str, book_data: dict[str, Any], lancedb_table: Table):
+        self.book_name = book_name
+        self.book_data = book_data
+        self.lancedb_table = lancedb_table
 
-def get_llm():
-    """Get the configured LLM for agents."""
-    return llm_client
+    def getChapterSummaries(self) -> str:
+        logger.info(f"Getting chapter summaries for {self.book_name}")
 
+        extracted_summaries: list[str] = []
 
-# === AGENT STATES ===
+        for chapter_num, chapter_meta in self.book_data["chapters"].items():
+            extracted_summaries.append(f"--- \"{chapter_meta["name"]}\" : CHAPTER {chapter_num} : PAGES {chapter_meta["start"]}-{chapter_meta["end"]} ---\n,"
+                                       f"{chapter_meta["summary"]}\n\n")
 
-class AgentState(TypedDict):
-    """State for the multi-agent system."""
-    # Original user query (preserved throughout)
-    query: str
-    # Current subagent in charge (for routing)
-    next: Literal["__end__", "chapter_agent", "section_agent", "pages_agent", "supervisor"]
-    # Summary context loaded from chapters_sections.json
-    summary_context: dict
-    # Final response after aggregation
-    response: str
-    # Messages for conversation history (managed by langgraph)
-    messages: list
-    # Parsed command query (for filtering to specific chapter/section/pages)
-    parsed_query: Any  # ParsedQuery from command_parser.py
+        return '\n'.join(extracted_summaries).strip()
 
+    def getSectionSummaries(self, chapters: list[int]) -> str:
+        logger.info(f"Getting section summaries for chapters {", ".join(map(lambda c: str(c), chapters))}")
 
-# === HELPER FUNCTIONS ===
+        extracted_summaries: list[str] = []
 
-def load_summary_context(chapters_sections_path: str = "chapters_sections.json") -> dict:
-    """
-    Load summary context from chapters_sections.json.
+        for chapter_num in (str(c) for c in chapters):
+            if chapter_num not in self.book_data["chapters"]:
+                logger.warning(f"Data for chapter {chapter_num} not found!")
+                continue
 
-    Returns a flattened dict mapping chapter/section IDs to their summaries
-    for quick lookup by the supervisor.
-    """
-    summaries = load_summaries(chapters_sections_path)
+            chapter_meta = self.book_data["chapters"][chapter_num]
+            extracted_summaries.append(f"--- \"{chapter_meta["name"]}\" : CHAPTER {chapter_num} : PAGES {chapter_meta["start"]}-{chapter_meta["end"]} ---\n")
+            for section_num, section_meta in chapter_meta["sections"].items():
+                extracted_summaries.append(f"-- \"{section_meta["name"]}\" : SECTION {section_num} : PAGES {section_meta["start"]}-{section_meta["end"]} --\n"
+                                           f"{section_meta["summary"]}\n")
+            extracted_summaries.append("")
 
-    # Flatten the structure for easier lookup
-    context = {}
+        return '\n'.join(extracted_summaries).strip()
 
-    for pdf_name, pdf_data in summaries.items():
-        chapters = pdf_data.get("chapters", {})
-        for c_id, chapter in chapters.items():
-            context[f"chapter_{c_id}"] = {
-                "id": c_id,
-                "name": chapter.get("name", f"Chapter {c_id}"),
-                "summary": chapter.get("summary", ""),
-                "sections": {}
-            }
+    def getSectionRawContents(self, sections: list[tuple[int, int]]) -> list[dict[str, str]]:
+        logger.info(f"Getting section contents for {", ".join(f"{s[0]}.{s[1]}" for s in sections)}")
 
-            # Flatten sections
-            for s_id, section in chapter.get("sections", {}).items():
-                context[f"section_{c_id}_{s_id}"] = {
-                    "id": s_id,
-                    "chapter_id": c_id,
-                    "name": section.get("name", f"Section {c_id}.{s_id}"),
-                    "summary": section.get("summary", "")
-                }
-                context[f"chapter_{c_id}"]["sections"][s_id] = context[f"section_{c_id}_{s_id}"]
+        openai_parsed: list[dict[str, str]] = []
 
-    return context
+        for chapter, section in sections:
+            # 1) Parse text per-page
+            text_results = (
+                self.lancedb_table.search()
+                .where(f"chapter_id = '{chapter}' AND section_id = '{section}' AND pic_id = ''")
+                .to_pandas()
+                .sort_values("page_end")
+            )
 
+            section_start = section_end = -1
+            section_name = ""
+            page_text_contents: list[list[str]] = []
+            last_header = ""
+            last_page: int = -1
 
-def determine_next_agent(query: str, default: str = "section_agent") -> str:
-    """Determine which agent should handle the query based on content."""
-    # Check for explicit section reference
-    if "/section" in query or "section" in query.lower():
-        return "section_agent"
+            for row in text_results.iterrows():
+                if not section_name:
+                    section_name = row[1]["section_name"]
 
-    # Check for explicit chapter reference
-    if "/chapter" in query:
-        return "chapter_agent"
+                cur_page = row[1]["page_end"]
+                if last_page != cur_page:
+                    last_page = cur_page
+                    page_text_contents.append([f"- PAGE {cur_page} -"])
 
-    # Check for page range reference
-    if "/pages" in query:
-        return "pages_agent"
+                if row[0] == 0:
+                    section_start = row[1]["page_start"]
+                elif row[0] == (len(text_results) - 1):
+                    section_end = row[1]["page_end"]
 
-    # Default to section agent for precision
-    return default
+                if row[1]["header"].strip() and (row[1]["header"].strip() != last_header):
+                    page_text_contents[-1].append("Header: " + row[1]["header"])
+                    last_header = row[1]["header"].strip()
 
+                page_text_contents[-1].append(row[1]["text"])
 
-# === DATABASE QUERY TOOLS ===
+            if not section_name:
+                raise IndexError(f"Section {chapter}.{section} not found!")
 
-def create_database_query_tool(parsed_query: Any):
-    """Create a database query tool bound to a specific parsed query.
+            # 2) Parse pictures per-page
+            picture_results = (
+                self.lancedb_table.search()
+                .where(f"chapter_id = '{chapter}' AND section_id = '{section}' AND pic_id != ''")
+                .to_pandas()
+            )
 
-    Args:
-        parsed_query: The parsed command query with chapter/section/pages filter
+            page_picture_contents: list[list[str]] = [[f"\n- PICTURES FOR PAGE {section_start + i} -"] for i in range(len(page_text_contents))]
+            for row in picture_results.iterrows():
+                cur_picture_page = page_picture_contents[row[1]["page_end"] - section_start]
+                cur_picture_page.append(f"Picture ID: {row[1]["pic_id"]} | "
+                                        f"Caption: {row[1]["text"] if row[1]["text"] else "N/A"}")
 
-    Returns:
-        A tool function that can be invoked by agents to query the textbook database
-    """
-    def query_tool(user_query: str) -> str:
-        """Query the textbook database for relevant passages with the filter from parsed_query."""
-        results = query_textbook_rag(
-            db_uri="lancedb_data",
-            table_name="textbook_chunks",
-            user_query=user_query,
-            response_format="sequential",
-            parsed=parsed_query
-        )
-        texts = [r.get("text", "") for r in results if r.get("type") == "text"]
-        return "\n\n".join(texts) if texts else "No relevant passages found."
+            for text, pic in zip(page_text_contents, page_picture_contents):
+                if len(pic) > 1:
+                    text += pic
 
-    query_tool.name = "query_textbook"
-    query_tool.description = "Query the textbook database for relevant passages. Use this to retrieve specific content from the textbook based on the parsed command (chapter, section, or pages filter)."
+            section_info = f"-- \"{section_name}\" : CHAPTER {chapter} : SECTION {section} : PAGES {section_start}-{section_end} --\n\n\n"
+            openai_parsed.append({
+                "type": "text",
+                "text": section_info + "\n\n\n".join("\n".join(page).strip() for page in page_text_contents)
+            })
 
-    return query_tool
+        return openai_parsed
 
+    def getPicturesByID(self, pic_ids: list[int]) -> list[dict[str, str]]:
+        logger.info(f"Fetching pictures {', '.join(str(p_id) for p_id in pic_ids)}")
 
-# === AGENT PROMPTS ===
+        import base64
 
-def get_supervisor_prompt() -> str:
-    """System prompt for the supervisor agent."""
-    return """You are a textbook tutor supervisor. Your role is to coordinate multiple specialized agents to answer the user's question about a textbook.
+        encoded_pics: list[str] = []
+        for pic_id in pic_ids:
+            with open(os.path.join(settings.LANCEDB_CHUNKS_PATH, os.path.splitext(self.book_name)[0], "pictures", f"pic_{pic_id}.png"), "rb") as f:
+                encoded_pics.append(base64.b64encode(f.read()).decode("utf-8"))
 
-Available subagents:
-- chapter_agent: For general questions about an entire chapter
-- section_agent: For focused questions about a specific section (most precise)
-- pages_agent: For questions about content on specific page ranges
-
-Your workflow:
-1. Analyze the user's query to identify the target chapter/section/pages
-2. Decide which agent should handle the query based on the scope
-3. After receiving results from subagents, aggregate them into a coherent answer
-4. Cite sources (chapter/section names and page ranges) in your response
-
-Return your final answer after analyzing the query and deciding on the appropriate agent."""
+        return [{"type": "image_url", "image_url": encoded_pic} for encoded_pic in encoded_pics]
 
 
-def get_chapter_agent_prompt(parsed=None) -> str:
-    """System prompt for the chapter agent.
+def constructTools(skills: Skills):
+    from langchain_core.tools import tool
 
-    Args:
-        parsed: Optional parsed command query with chapter_id if specified
+    @tool
+    def getChapterSummaries() -> str:
+        """
+        Fetches high-level summaries of all chapters in the textbook.
+        Use this tool first to deduce which chapter(s) contain relevant context.
+        """
+        return skills.getChapterSummaries()
 
-    Returns:
-        The prompt string with chapter-specific instructions
-    """
-    base = """You are a chapter-level textbook tutor. Handle queries about entire chapters.
+    @tool
+    def getSectionSummaries(chapters: list[int]) -> str:
+        """Fetches section-level summaries for the specified chapter numbers.
 
-Your task:
-1. Use the chapter summary (from the conversation context) to understand the chapter scope
-2. Retrieve relevant chunks from the chapter using LanceDB
-3. Provide comprehensive coverage of the topic within this chapter
-4. Cite the chapter name and relevant page ranges in your response
+        Args:
+            chapters: List of integer chapter numbers (e.g. [1, 2]).
+        """
+        # Enforce max_agent_chapters variable constraint
+        capped_chapters = chapters[:settings.MAX_AGENT_CHAPTERS]
+        return skills.getSectionSummaries(capped_chapters)
 
-If the query is about a specific section within the chapter, return "delegate_to: section_agent"
-with a brief explanation, and the supervisor will delegate appropriately."""
+    @tool
+    def getSectionRawContents(sections: list[tuple[int, int] | list[int]]) -> list[dict[str, str]]:
+        """Fetches the full raw text content of specific textbook sections.
 
-    if parsed and hasattr(parsed, 'command') and parsed.command == "chapter" and hasattr(parsed, 'chapter_id') and parsed.chapter_id:
-        return base + f"\n\nIMPORTANT: User specifically requested chapter {parsed.chapter_id}. Filter your search to this chapter only using the query_textbook tool."
+        Args:
+            sections: List of (chapter_number, section_number) pairs, e.g. [[2, 2], [2, 3]].
+        """
+        # Convert JSON list pairs to tuples and enforce max_agent_sections constraint
+        formatted_sections: list[tuple[int, int]] = [
+            (int(item[0]), int(item[1])) for item in sections[:settings.MAX_AGENT_SECTIONS]
+        ]
+        return skills.getSectionRawContents(formatted_sections)
 
-    return base
+    @tool
+    def getPicturesByID(picture_ids: list[int]) -> list[dict[str, str]]:
+        """Fetches all pictures given their IDs, returning each picture in the same order in which they were requested.
 
+        Args:
+            picture_ids: List of pictures (by ID integers) to fetch. The returned list's order matches that of picture_ids', e.g. [0, 4] -> [picture 0 data, picture 4 data]
+        """
+        return skills.getPicturesByID(picture_ids)
 
-def get_section_agent_prompt(parsed=None) -> str:
-    """System prompt for the section agent.
+    tools = [
+        getChapterSummaries,
+        getSectionSummaries,
+        getSectionRawContents,
+        getPicturesByID
+    ]
+    tools_by_name = {
+        "getChapterSummaries": getChapterSummaries,
+        "getSectionSummaries": getSectionSummaries,
+        "getSectionRawContents": getSectionRawContents,
+        "getPicturesByID": getPicturesByID
+    }
 
-    Args:
-        parsed: Optional parsed command query with chapter_id and section_id if specified
-
-    Returns:
-        The prompt string with section-specific instructions
-    """
-    base = """You are a section-level textbook tutor. Handle queries about specific sections with high precision.
-
-Your task:
-1. Focus on the exact topic the user asked about
-2. Use the section summary to understand what this section covers
-3. Retrieve relevant chunks from this specific section using LanceDB
-4. Provide a focused, precise answer
-5. Cite the section name and exact page range in your response
-
-This is the most precise agent - use it when the query targets a specific section."""
-
-    if parsed and hasattr(parsed, 'command') and parsed.command == "section" and hasattr(parsed, 'chapter_id') and parsed.chapter_id and hasattr(parsed, 'section_id') and parsed.section_id:
-        return base + f"\n\nIMPORTANT: User specifically requested section {parsed.chapter_id}.{parsed.section_id}. Filter your search to this section only using the query_textbook tool."
-
-    return base
-
-
-def get_pages_agent_prompt(parsed=None) -> str:
-    """System prompt for the pages agent.
-
-    Args:
-        parsed: Optional parsed command query with page_from and page_to if specified
-
-    Returns:
-        The prompt string with page-range-specific instructions
-    """
-    base = """You are a page-range textbook tutor. Handle queries about content on specific page ranges.
-
-Your task:
-1. Use the page range (from the conversation context or query) to filter retrieved chunks
-2. Provide targeted answers based on content within the specified page range
-3. Cite the exact page numbers in your response
-
-Use this agent when the query specifies page numbers or page ranges."""
-
-    if parsed and hasattr(parsed, 'command') and parsed.command == "pages" and hasattr(parsed, 'page_from') and parsed.page_from is not None and hasattr(parsed, 'page_to') and parsed.page_to is not None:
-        return base + f"\n\nIMPORTANT: User specifically requested pages {parsed.page_from}-{parsed.page_to}. Filter your search to this page range only using the query_textbook tool."
-
-    return base
+    return tools, tools_by_name
 
 
-# === AGENT CREATION ===
+def buildTextbookRagAgent(skills: Skills):
+    """Constructs a tool-calling AgentExecutor configured with LiteLLM and constraints."""
+    tools, tools_by_name = constructTools(skills)
 
-def create_supervisor_agent():
-    """Create the main supervisor agent that coordinates all subagents."""
-    llm = ChatOpenAI(
+    # Initialize ChatLiteLLM wrapper
+    model_with_tools = ChatOpenAI(
         model="qwen3-coder-next:local",
         base_url=settings.LITELLM_BASE_URL,
         api_key=settings.LITELLM_API_KEY,
-        temperature=0.2
-    )
+        temperature=0.0
+    ).bind_tools(tools)
 
-    # Supervisor agent doesn't need tools - it makes routing decisions
-    agent = create_agent(
-        model=llm,
-        tools=[],
-        system_prompt=get_supervisor_prompt(),
-        checkpointer=None
-    )
+    # Construct the LangGraph agent
+    from langchain.messages import AnyMessage
+    from typing_extensions import TypedDict, Annotated
+    import operator
+    from langchain.messages import SystemMessage
+    from langchain.messages import ToolMessage
+    from typing import Literal
+    from langgraph.graph import StateGraph, START, END
 
-    def supervisor_node(state: AgentState):
-        """Node function that invokes the supervisor agent."""
-        result = agent.invoke(state)
-        # Determine next agent based on query
-        result["next"] = determine_next_agent(state.get("query", ""))
-        # Preserve parsed query from state for subagents
-        result["parsed_query"] = state.get("parsed_query")
-        return result
+    class MessagesState(TypedDict):
+        messages: Annotated[list[AnyMessage], operator.add]
+        llm_calls: int
 
-    return supervisor_node
-
-
-def create_chapter_agent():
-    """Create the chapter-level agent."""
-    llm = ChatOpenAI(
-        model="qwen3-coder-next:local",
-        base_url=settings.LITELLM_BASE_URL,
-        api_key=settings.LITELLM_API_KEY,
-        temperature=0.2
-    )
-
-    def chapter_agent_node(state: AgentState):
-        """Node function that invokes the chapter agent."""
-        parsed = state.get("parsed_query")
-
-        # Use parsed chapter if available
-        chapter_id = None
-        if parsed and hasattr(parsed, 'command') and parsed.command == "chapter" and hasattr(parsed, 'chapter_id') and parsed.chapter_id:
-            chapter_id = parsed.chapter_id
-        else:
-            # Fallback: find first chapter
-            for key, value in state.get("summary_context", {}).items():
-                if key.startswith("chapter_") and isinstance(value, dict):
-                    if value.get("summary"):
-                        chapter_id = value.get("id")
-                        break
-
-        # Build context with chapter summary
-        chapter_context = ""
-        if chapter_id:
-            chapter_info = state.get("summary_context", {}).get(f"chapter_{chapter_id}", {})
-            chapter_context = f"\n\nChapter Context:\nID: {chapter_id}\nName: {chapter_info.get('name', '')}\nSummary: {chapter_info.get('summary', '')}"
-
-        full_prompt = get_chapter_agent_prompt(parsed) + chapter_context
-
-        # Create database query tool with parsed query for filtering
-        tool = create_database_query_tool(parsed)
-
-        agent = create_agent(
-            llm,
-            tools=[tool],
-            system_prompt=full_prompt,
-            checkpointer=None
-        )
-
-        result = agent.invoke(state)
-        # Mark as complete - response comes directly from this agent
-        result["next"] = "__end__"
-        return result
-
-    return chapter_agent_node
-
-
-def create_section_agent():
-    """Create the section-level agent."""
-    llm = ChatOpenAI(
-        model="qwen3-coder-next:local",
-        base_url=settings.LITELLM_BASE_URL,
-        api_key=settings.LITELLM_API_KEY,
-        temperature=0.2
-    )
-
-    def section_agent_node(state: AgentState):
-        """Node function that invokes the section agent."""
-        parsed = state.get("parsed_query")
-
-        # Use parsed section if available
-        section_info = None
-        if parsed and hasattr(parsed, 'command') and parsed.command == "section" and hasattr(parsed, 'chapter_id') and parsed.chapter_id and hasattr(parsed, 'section_id') and parsed.section_id:
-            section_info = state.get("summary_context", {}).get(f"section_{parsed.chapter_id}_{parsed.section_id}")
-        else:
-            # Fallback: find first section
-            for key, value in state.get("summary_context", {}).items():
-                if key.startswith("section_") and isinstance(value, dict):
-                    if value.get("summary"):
-                        section_info = value
-                        break
-
-        # Build context with section summary
-        section_context = ""
-        if section_info:
-            section_context = f"\n\nSection Context:\nID: {section_info.get('chapter_id')}.{section_info.get('id')}\nName: {section_info.get('name', '')}\nSummary: {section_info.get('summary', '')}"
-
-        full_prompt = get_section_agent_prompt(parsed) + section_context
-
-        # Create database query tool with parsed query for filtering
-        tool = create_database_query_tool(parsed)
-
-        agent = create_agent(
-            llm,
-            tools=[tool],
-            system_prompt=full_prompt,
-            checkpointer=None
-        )
-
-        result = agent.invoke(state)
-        # Mark as complete - response comes directly from this agent
-        result["next"] = "__end__"
-        return result
-
-    return section_agent_node
-
-
-def create_pages_agent():
-    """Create the page-range agent."""
-    llm = ChatOpenAI(
-        model="qwen3-coder-next:local",
-        base_url=settings.LITELLM_BASE_URL,
-        api_key=settings.LITELLM_API_KEY,
-        temperature=0.2
-    )
-
-    def pages_agent_node(state: AgentState):
-        """Node function that invokes the pages agent."""
-        parsed = state.get("parsed_query")
-
-        full_prompt = get_pages_agent_prompt(parsed)
-
-        # Create database query tool with parsed query for filtering
-        tool = create_database_query_tool(parsed)
-
-        agent = create_agent(
-            llm,
-            tools=[tool],
-            system_prompt=full_prompt,
-            checkpointer=None
-        )
-
-        result = agent.invoke(state)
-        # Mark as complete - response comes directly from this agent
-        result["next"] = "__end__"
-        return result
-
-    return pages_agent_node
-
-
-# === GRAPH DEFINITION ===
-
-def build_orchestrator_graph():
-    """
-    Build the full orchestrator graph with supervisor and subagents.
-
-    The graph workflow:
-    1. Entry: supervisor node
-    2. Supervisor analyzes query and decides which subagent to invoke
-    3. Subagent retrieves from LanceDB and processes query
-    4. Subagent returns to supervisor for aggregation
-    5. Supervisor composes final response
-    6. END: completion
-
-    Returns:
-        Compiled graph ready for invocation
-    """
-    workflow = StateGraph(AgentState)
-
-    # Add all nodes
-    workflow.add_node("supervisor", create_supervisor_agent())
-    workflow.add_node("chapter_agent", create_chapter_agent())
-    workflow.add_node("section_agent", create_section_agent())
-    workflow.add_node("pages_agent", create_pages_agent())
-
-    # Conditional routing from supervisor
-    def route_from_supervisor(state: AgentState) -> str:
-        """Determine which agent should handle the query."""
-        next_agent = state.get("next")
-
-        if next_agent == "__end__":
-            return END
-
-        valid_agents = ["chapter_agent", "section_agent", "pages_agent", "supervisor"]
-        if next_agent in valid_agents:
-            return next_agent
-
-        # Default routing based on query analysis
-        query = state.get("query", "")
-        return determine_next_agent(query)
-
-    workflow.add_conditional_edges(
-        "supervisor",
-        route_from_supervisor,
-        {
-            "chapter_agent": "chapter_agent",
-            "section_agent": "section_agent",
-            "pages_agent": "pages_agent",
-            END: END
+    def llm_call(state: dict):
+        return {
+            "messages": [
+                model_with_tools.invoke(
+                    state["messages"][:-1] +
+                    [
+                        SystemMessage(
+                            content="You are a textbook research assistant. Your task is to gather section-level textbook information "
+                                    "to answer the user's question.\n\n"
+                                    "Follow this multi-step procedure:\n"
+                                    "1. Call `getChapterSummaries` to inspect all chapter summaries.\n"
+                                    "2. Select the most relevant chapter numbers (at most {max_chapters} chapters) "
+                                    "and request their section summaries using `getSectionSummaries`.\n"
+                                    "3. Select the most relevant section numbers (at most {max_sections} sections) "
+                                    "and request their raw text content using `getSectionRawContents`.\n"
+                                    "   Optional: If and only if the user's query cannot be answered without analyzing a page's pictures, "
+                                    "request that page's pictures using `getPicturesByID`.\n"
+                                    "4. Answer the user's query thoroughly using ONLY the retrieved raw section contents."
+                        ),
+                        state["messages"][-1]
+                    ]
+                )
+            ],
+            "llm_calls": state.get('llm_calls', 0) + 1
         }
+
+    def tool_node(state: dict):
+        """Performs the tool call"""
+
+        result = []
+        for tool_call in state["messages"][-1].tool_calls:
+            tool = tools_by_name[tool_call["name"]]
+            observation = tool.invoke(tool_call["args"])
+            result.append(ToolMessage(content=observation, tool_call_id=tool_call["id"]))
+        return {"messages": result}
+
+    def should_continue(state: MessagesState) -> Literal["tool_node", END]:
+        """Decide if we should continue the loop or stop based upon whether the LLM made a tool call"""
+
+        messages = state["messages"]
+        last_message = messages[-1]
+
+        # If the LLM makes a tool call, then perform an action
+        if last_message.tool_calls:
+            return "tool_node"
+
+        # Otherwise, we stop (reply to the user)
+        return END
+
+    # Build workflow
+    agent_builder = StateGraph(MessagesState)
+
+    # Add nodes
+    agent_builder.add_node("llm_call", llm_call)
+    agent_builder.add_node("tool_node", tool_node)
+
+    # Add edges to connect nodes
+    agent_builder.add_edge(START, "llm_call")
+    agent_builder.add_conditional_edges(
+        "llm_call",
+        should_continue,
+        ["tool_node", END]
+    )
+    agent_builder.add_edge("tool_node", "llm_call")
+
+    # Compile the agent with context capabilities
+    from langgraph.checkpoint.memory import InMemorySaver
+    from langgraph.store.memory import InMemoryStore
+
+    local_storage = InMemorySaver()
+    export_storage = InMemoryStore()
+    agent = agent_builder.compile(checkpointer=local_storage, store=export_storage)
+
+    # Show the agent
+    # from IPython.display import Image, display
+    # display(Image(agent.get_graph(xray=True).draw_mermaid_png()))
+
+    return agent
+
+
+if __name__ == '__main__':
+    from lancedb import connect
+    from main import JSONFile
+
+    chapters_sections = JSONFile("chapters_sections.json")
+    book_data = chapters_sections.data["guide-t-cp.pdf"]
+    table = connect(settings.LANCEDB_DATA_PATH).open_table("guide-t-cp.pdf")
+
+    agent_skills = Skills("guide-t-cp.pdf", book_data, table)
+    # print(agent_skills.getSectionRawContents([(4, 1), (4, 2), (4, 3)]))
+
+    from langchain_core.messages import HumanMessage
+
+    test_agent = buildTextbookRagAgent(agent_skills)
+    result = test_agent.invoke(
+        {"messages": [HumanMessage("Fig 4.4 can be found in section 4.2. What page is fig 4.4 on?")]},
+        {"configurable": {"thread_id": "test"}}
     )
 
-    # Subagents complete the workflow (no routing back to supervisor)
-    for agent in ["chapter_agent", "section_agent", "pages_agent"]:
-        workflow.add_conditional_edges(
-            agent,
-            lambda state: state.get("next", "__end__"),
-            {"__end__": "__end__"}
-        )
-
-    # Set entry point
-    workflow.set_entry_point("supervisor")
-
-    # Compile with checkpointing for persistence
-    return workflow.compile(checkpointer=MemorySaver())
-
-
-# === ORCHESTRATOR ENTRY POINT ===
-
-def create_orchestrator():
-    """
-    Create and return a configured orchestrator instance.
-
-    This is the main entry point for using the LangGraph orchestrator.
-    """
-    return build_orchestrator_graph()
-
-
-async def orchestrate_query(
-    user_query: str,
-    db_uri: str,
-    table_name: str,
-    summaries_path: str = "chapters_sections.json"
-) -> str:
-    """
-    Main orchestration entry point.
-
-    1. Parse command from user query
-    2. Retrieve initial chunks
-    3. Analyze intent using supervisor agent
-    4. Delegate to subagents as needed
-    5. Aggregate results and return final answer
-
-    Args:
-        user_query: The user's input query
-        db_uri: URI to the LanceDB database
-        table_name: Name of the chunks table
-        summaries_path: Path to chapters_sections.json
-
-    Returns:
-        Final answer string from the orchestrator
-    """
-    # Load summary context
-    summary_context = load_summary_context(summaries_path)
-
-    # Parse query to extract command information
-    parsed = parse_query(user_query)
-
-    # Initialize the orchestrator graph
-    orchestrator = create_orchestrator()
-
-    # Create initial state
-    parsed = parse_query(user_query)
-    initial_state = AgentState(
-        query=user_query,
-        next="supervisor",
-        summary_context=summary_context,
-        response="",
-        messages=[HumanMessage(content=user_query)],
-        parsed_query=parsed
-    )
-
-    # Config for persistence
-    config = {"configurable": {"thread_id": "user-session-1"}}
-
-    # Run the orchestrator
-    result = orchestrator.invoke(initial_state, config=config)
-
-    # Extract final response from messages
-    if "messages" in result and result["messages"]:
-        final_message = result["messages"][-1]
-        if hasattr(final_message, "content"):
-            return final_message.content
-        return str(final_message)
-
-    return "No response generated."
+    print(result["messages"][-1].content)
